@@ -1,49 +1,114 @@
-# Import necessary libraries
-import tensorflow as tf
-from tensorflow.keras import datasets, layers, models
+# Import necessary packages
+import torch
+from torch import nn, optim
+from torchvision import datasets, transforms, models
+from torch.utils.data import DataLoader
+import json
+from PIL import Image
 import matplotlib.pyplot as plt
+import numpy as np
 
-# Load and preprocess the CIFAR-10 dataset
-(train_images, train_labels), (test_images, test_labels) = datasets.cifar10.load_data()
-train_images, test_images = train_images / 255.0, test_images / 255.0
+# Set device (use GPU if available)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Define class names
-class_names = ['Airplane', 'Automobile', 'Bird', 'Cat', 'Deer', 'Dog', 'Frog', 'Horse', 'Ship', 'Truck']
+# Define data transformations
+data_transforms = {
+    'train': transforms.Compose([
+        transforms.RandomResizedCrop(224),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ]),
+    'val': transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ]),
+    'test': transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ]),
+}
 
-# Display a few sample images
-plt.figure(figsize=(10, 10))
-for i in range(25):
-    plt.subplot(5, 5, i + 1)
-    plt.xticks([])
-    plt.yticks([])
-    plt.grid(False)
-    plt.imshow(train_images[i])
-    plt.xlabel(class_names[train_labels[i][0]])
-plt.show()
+# Load the data
+data_dir = 'path/to/your/flower/dataset'
+image_datasets = {x: datasets.ImageFolder(root=f"{data_dir}/{x}", transform=data_transforms[x]) for x in ['train', 'val', 'test']}
+dataloaders = {x: DataLoader(image_datasets[x], batch_size=32, shuffle=True) for x in ['train', 'val', 'test']}
+dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val', 'test']}
+class_names = image_datasets['train'].classes
 
-# Build the Convolutional Neural Network (CNN) model
-model = models.Sequential([
-    layers.Conv2D(32, (3, 3), activation='relu', input_shape=(32, 32, 3)),
-    layers.MaxPooling2D((2, 2)),
-    layers.Conv2D(64, (3, 3), activation='relu'),
-    layers.MaxPooling2D((2, 2)),
-    layers.Conv2D(64, (3, 3), activation='relu'),
-    layers.Flatten(),
-    layers.Dense(64, activation='relu'),
-    layers.Dense(10)
-])
+# Load a pre-trained model
+model = models.vgg16(pretrained=True)
 
-# Compile the model
-model.compile(optimizer='adam',
-              loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-              metrics=['accuracy'])
+# Freeze model parameters
+for param in model.parameters():
+    param.requires_grad = False
+
+# Define a new classifier
+classifier = nn.Sequential(
+    nn.Linear(25088, 4096),
+    nn.ReLU(),
+    nn.Dropout(0.5),
+    nn.Linear(4096, 102),
+    nn.LogSoftmax(dim=1)
+)
+
+# Replace the model classifier
+model.classifier = classifier
+
+# Define loss function and optimizer
+criterion = nn.NLLLoss()
+optimizer = optim.Adam(model.classifier.parameters(), lr=0.001)
+
+# Move model to device
+model.to(device)
+
+# Training function
+def train_model(model, criterion, optimizer, num_epochs=10):
+    for epoch in range(num_epochs):
+        for phase in ['train', 'val']:
+            if phase == 'train':
+                model.train()
+            else:
+                model.eval()
+
+            running_loss = 0.0
+            corrects = 0
+
+            for inputs, labels in dataloaders[phase]:
+                inputs, labels = inputs.to(device), labels.to(device)
+
+                optimizer.zero_grad()
+
+                with torch.set_grad_enabled(phase == 'train'):
+                    outputs = model(inputs)
+                    loss = criterion(outputs, labels)
+
+                    if phase == 'train':
+                        loss.backward()
+                        optimizer.step()
+
+                running_loss += loss.item() * inputs.size(0)
+                _, preds = torch.max(outputs, 1)
+                corrects += torch.sum(preds == labels.data)
+
+            epoch_loss = running_loss / dataset_sizes[phase]
+            epoch_acc = corrects.double() / dataset_sizes[phase]
+
+            print(f'{phase.capitalize()} Epoch {epoch + 1}/{num_epochs} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}')
 
 # Train the model
-model.fit(train_images, train_labels, epochs=10, validation_data=(test_images, test_labels))
+train_model(model, criterion, optimizer, num_epochs=5)
 
-# Evaluate the model on the test set
-test_loss, test_acc = model.evaluate(test_images, test_labels, verbose=2)
-print(f"\nTest accuracy: {test_acc}")
+# Save the model checkpoint
+checkpoint = {
+    'state_dict': model.state_dict(),
+    'class_to_idx': image_datasets['train'].class_to_idx,
+    'arch': 'vgg16',
+    'classifier': classifier,
+}
 
-# Save the trained model
-model.save("image_classification_model.h5")
+torch.save(checkpoint, 'flower_classification_checkpoint.pth')
