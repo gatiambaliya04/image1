@@ -1,32 +1,66 @@
-# Assume this is your train.py file content
-# Save this content in a file named "train.py"
+import argparse
+from torchvision import models
+from train_utils import train_model
 
-import tensorflow as tf
-from tensorflow.keras import datasets, layers, models
+parser = argparse.ArgumentParser(description='Train a flower image classification model')
+parser.add_argument('--data_dir', type=str, default='path/to/your/flower/dataset', help='Path to the flower dataset')
+parser.add_argument('--arch', type=str, default='vgg16', choices=['vgg16', 'resnet18'], help='Architecture of the model')
+parser.add_argument('--learning_rate', type=float, default=0.001, help='Learning rate for training')
+parser.add_argument('--hidden_units', type=int, default=4096, help='Number of hidden units in the classifier')
+parser.add_argument('--epochs', type=int, default=5, help='Number of training epochs')
+parser.add_argument('--gpu', action='store_true', help='Use GPU for training')
 
-# Load and preprocess the CIFAR-10 dataset
-(train_images, train_labels), (test_images, test_labels) = datasets.cifar10.load_data()
-train_images, test_images = train_images / 255.0, test_images / 255.0
+args = parser.parse_args()
 
-# Build the Convolutional Neural Network (CNN) model
-model = models.Sequential([
-    layers.Conv2D(32, (3, 3), activation='relu', input_shape=(32, 32, 3)),
-    layers.MaxPooling2D((2, 2)),
-    layers.Conv2D(64, (3, 3), activation='relu'),
-    layers.MaxPooling2D((2, 2)),
-    layers.Conv2D(64, (3, 3), activation='relu'),
-    layers.Flatten(),
-    layers.Dense(64, activation='relu'),
-    layers.Dense(10)
-])
+# Load a pre-trained model
+if args.arch == 'vgg16':
+    model = models.vgg16(pretrained=True)
+    input_size = 25088
+elif args.arch == 'resnet18':
+    model = models.resnet18(pretrained=True)
+    input_size = 512
 
-# Compile the model
-model.compile(optimizer='adam',
-              loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-              metrics=['accuracy'])
+# Freeze model parameters
+for param in model.parameters():
+    param.requires_grad = False
 
-# Train the model
-model.fit(train_images, train_labels, epochs=10, validation_data=(test_images, test_labels))
+# Define a new classifier
+classifier = nn.Sequential(
+    nn.Linear(input_size, args.hidden_units),
+    nn.ReLU(),
+    nn.Dropout(0.5),
+    nn.Linear(args.hidden_units, 102),
+    nn.LogSoftmax(dim=1)
+)
 
-# Save the trained model
-model.save("image_classification_model.h5")
+# Replace the model classifier
+model.classifier = classifier
+
+# Define loss function and optimizer
+criterion = nn.NLLLoss()
+optimizer = optim.Adam(model.classifier.parameters(), lr=args.learning_rate)
+
+# Move model to device
+device = torch.device("cuda" if args.gpu and torch.cuda.is_available() else "cpu")
+model.to(device)
+
+# Load and preprocess the data
+data_transforms = {
+    'train': transforms.Compose([
+        transforms.RandomResizedCrop(224),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ]),
+    'val': transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ]),
+}
+
+image_datasets = {x: datasets.ImageFolder(root=f"{args.data_dir}/{x}", transform=data_transforms[x]) for x in ['train', 'val']}
+dataloaders = {x: DataLoader(image_datasets[x], batch_size=32, shuffle=True) for x in ['train', 'val']}
+dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
+class_names = image_datasets['train
